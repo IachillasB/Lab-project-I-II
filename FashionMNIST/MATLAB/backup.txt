@@ -1,0 +1,108 @@
+function [net, trainInfo] = customTrainModel(net, trainData, options)
+    % Initialize training progress
+    numEpochs = options.MaxEpochs;
+    iteration = 0;
+    trainLoss = [];
+    trainAccuracy = [];
+
+    for epoch = 1:numEpochs
+        reset(trainData); % Reset data store
+        while hasdata(trainData)
+            iteration = iteration + 1;
+            data = read(trainData);
+            X = data.input;
+            Y = data.response;
+            
+            % Evaluate the model gradients and loss using dlfeval and the
+            % modelGradients function listed below
+            [gradients, loss, predictions] = dlfeval(@modelGradients, net, X, Y);
+            
+            % Update the network parameters using the SGDM optimizer
+            net = sgdmupdate(net, gradients, options);
+            
+            % Calculate accuracy
+            [~, predictedLabels] = max(predictions, [], 1);
+            accuracy = mean(predictedLabels == Y);
+            
+            % Accumulate loss and accuracy
+            trainLoss(end+1) = double(gather(extractdata(loss)));
+            trainAccuracy(end+1) = accuracy;
+        end
+        
+        fprintf('Epoch %d, Loss: %.4f, Accuracy: %.2f%%\n', ...
+                epoch, mean(trainLoss), mean(trainAccuracy)*100);
+    end
+    
+    trainInfo.Loss = trainLoss;
+    trainInfo.Accuracy = trainAccuracy;
+end
+
+
+function testInfo = customTestModel(net, testData)
+    reset(testData);
+    testLoss = [];
+    testAccuracy = [];
+    
+    while hasdata(testData)
+        data = read(testData);
+        X = data.input;
+        Y = data.response;
+        
+        % Forward pass
+        predictions = predict(net, X);
+        
+        % Calculate loss
+        loss = crossentropy(predictions, Y);
+        
+        % Calculate accuracy
+        [~, predictedLabels] = max(predictions, [], 1);
+        accuracy = mean(predictedLabels == Y);
+        
+        % Accumulate loss and accuracy
+        testLoss(end+1) = double(gather(extractdata(loss)));
+        testAccuracy(end+1) = accuracy;
+    end
+    
+    testInfo.Loss = mean(testLoss);
+    testInfo.Accuracy = mean(testAccuracy);
+    fprintf('Test Loss: %.4f, Test Accuracy: %.2f%%\n', ...
+            testInfo.Loss, testInfo.Accuracy*100);
+end
+
+function results = evalModel(net, dataLoader, lossFunction, classes)
+    % Initialize metrics
+    numObservations = numel(dataLoader.Files);
+    loss = 0;
+    numCorrect = 0;
+    numProcessed = 0;
+
+    % Evaluate the model
+    while hasdata(dataLoader)
+        % Read batch of data
+        [X, Y] = next(dataLoader);
+        
+        % Forward pass to get predictions
+        predictions = predict(net, X);
+        
+        % Calculate loss
+        YLabels = onehotdecode(Y, classes, 1);
+        loss = loss + lossFunction(predictions, YLabels);
+        
+        % Calculate accuracy
+        [~, predictedLabels] = max(predictions, [], 2);
+        numCorrect = numCorrect + sum(predictedLabels == YLabels);
+        
+        % Update the number of processed samples
+        numProcessed = numProcessed + size(X, 4); % Assuming X is a 4-D array
+    end
+
+    % Calculate average loss and accuracy
+    avgLoss = loss / numProcessed;
+    accuracy = numCorrect / numProcessed;
+
+    % Return results as a structure
+    results = struct(...
+        'ModelName', class(net), ...
+        'ModelLoss', avgLoss, ...
+        'ModelAccuracy', accuracy * 100);
+end
